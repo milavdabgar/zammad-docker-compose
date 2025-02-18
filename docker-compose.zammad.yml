@@ -1,0 +1,131 @@
+version: '3.8'
+
+x-shared:
+  zammad-service: &zammad-service
+    environment: &zammad-environment
+      MEMCACHE_SERVERS: zammad-memcached:11211
+      POSTGRESQL_DB: zammad_production
+      POSTGRESQL_HOST: zammad-postgresql
+      POSTGRESQL_USER: zammad
+      POSTGRESQL_PASS: seagate
+      POSTGRESQL_PORT: 5432
+      POSTGRESQL_OPTIONS: ?pool=50
+      REDIS_URL: redis://zammad-redis:6379
+      ELASTICSEARCH_ENABLED: "true"
+      ELASTICSEARCH_HOST: zammad-elasticsearch
+      ELASTICSEARCH_PORT: 9200
+      TZ: Asia/Kolkata
+    image: ghcr.io/zammad/zammad:6.4.1-45
+    restart: always
+    volumes:
+      - zammad-storage:/opt/zammad/storage
+    depends_on:
+      - zammad-memcached
+      - zammad-postgresql
+      - zammad-redis
+    networks:
+      - zammad-network
+
+services:
+  zammad-backup:
+    <<: *zammad-service
+    command: ["zammad-backup"]
+    volumes:
+      - zammad-backup:/var/tmp/zammad
+      - zammad-storage:/opt/zammad/storage:ro
+    user: 0:0
+
+  zammad-elasticsearch:
+    image: bitnami/elasticsearch:8.17.1
+    restart: always
+    volumes:
+      - elasticsearch-data:/bitnami/elasticsearch/data
+    environment:
+      - discovery.type=single-node
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
+    networks:
+      - zammad-network
+
+  zammad-init:
+    <<: *zammad-service
+    command: ["zammad-init"]
+    depends_on:
+      - zammad-postgresql
+    restart: on-failure
+    user: 0:0
+
+  zammad-memcached:
+    command: memcached -m 256M
+    image: memcached:1.6.36-alpine
+    restart: always
+    networks:
+      - zammad-network
+
+  zammad-nginx:
+    <<: *zammad-service
+    command: ["zammad-nginx"]
+    expose:
+      - "8080"
+    depends_on:
+      - zammad-railsserver
+    networks:
+      - zammad-network
+      - npm-network
+
+  zammad-postgresql:
+    environment:
+      POSTGRES_DB: zammad_production
+      POSTGRES_USER: zammad
+      POSTGRES_PASSWORD: seagate
+    image: postgres:17.2-alpine
+    restart: always
+    volumes:
+      - postgresql-data:/var/lib/postgresql/data
+    networks:
+      - zammad-network
+
+  zammad-redis:
+    image: redis:7.4.2-alpine
+    restart: always
+    volumes:
+      - redis-data:/data
+    networks:
+      - zammad-network
+
+  zammad-railsserver:
+    <<: *zammad-service
+    command: ["zammad-railsserver"]
+    depends_on:
+      - zammad-postgresql
+      - zammad-elasticsearch
+      - zammad-redis
+      - zammad-memcached
+    ports:
+      - "3000:3000"
+
+  zammad-scheduler:
+    <<: *zammad-service
+    command: ["zammad-scheduler"]
+
+  zammad-websocket:
+    <<: *zammad-service
+    command: ["zammad-websocket"]
+
+networks:
+  zammad-network:
+    driver: bridge
+  npm-network:
+    external: true
+    name: npm_network
+
+volumes:
+  elasticsearch-data:
+    driver: local
+  postgresql-data:
+    driver: local
+  redis-data:
+    driver: local
+  zammad-backup:
+    driver: local
+  zammad-storage:
+    driver: local
